@@ -1,38 +1,211 @@
-.App {
-  text-align: center;
+:root {
+  --nav-height: 56px;
+  --bg: #0b0d17;
+  --surface: #151a2e;
+  --text: #e6e9f5;
+  --muted: #8b93b5;
+  --accent: #66ccff;
+  --error: #ff7b7b;
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+body {
+  background: var(--bg);
+  color: var(--text);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
+/* Layout */
+
+.AppLayout-header {
+  position: relative;
+  box-sizing: border-box;
+  height: var(--nav-height);
+  background: var(--surface);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.AppLayout-nav {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+}
+
+.AppLayout-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.AppLayout-links a,
+.AppLayout-links button {
+  display: block;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.AppLayout-links a:hover,
+.AppLayout-links button:hover {
+  color: var(--text);
+}
+
+.AppLayout-links a[aria-current='page'] {
+  color: var(--accent);
+  background: rgba(102, 204, 255, 0.1);
+}
+
+.AppLayout-menuToggle {
+  display: none;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (max-width: 768px) {
+  .AppLayout-menuToggle {
+    display: block;
+  }
+
+  /* Closed menu uses visibility, not display, so GSAP can animate it shut.
+     Hidden items are neither clickable nor focusable. */
+  .AppLayout-links {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    top: var(--nav-height);
+    left: 0;
+    right: 0;
+    z-index: 10;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    padding: 8px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+
+  .AppLayout-links.is-open {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  .AppLayout-links a,
+  .AppLayout-links button {
+    width: 100%;
+    text-align: left;
   }
 }
 
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
+.AppLayout-main {
+  min-height: calc(100vh - var(--nav-height));
+}
+
+/* Pages */
+
+.HomePage {
+  height: calc(100vh - var(--nav-height));
+  overflow: hidden;
+}
+
+.FactoryScene {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.FactoryScene-message {
+  position: absolute;
+  inset: 0;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  margin: 0;
+  color: var(--muted);
 }
 
-.App-link {
-  color: #61dafb;
+.FactoryScene-message[role='alert'] {
+  color: var(--error);
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.ProfilePage {
+  padding: 32px 16px;
+}
+
+.LoginPage {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.LoginPage-form {
+  width: 100%;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.LoginPage-form h1 {
+  margin: 0 0 4px;
+  font-size: 1.5rem;
+}
+
+.LoginPage-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.LoginPage-form input {
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.LoginPage-form button {
+  padding: 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--bg);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.LoginPage-error {
+  margin: 0;
+  color: var(--error);
+  font-size: 0.875rem;
+}
+
+.LoginPage-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-align: center;
 }

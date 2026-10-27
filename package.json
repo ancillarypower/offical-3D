@@ -10,6 +10,7 @@
     "@testing-library/user-event": "^13.5.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "react-router-dom": "^7.18.4",
     "react-scripts": "5.0.1",
     "three": "^0.186.1",
     "web-vitals": "^2.1.4"
@@ -37,5 +38,16 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "jest": {
+    "moduleNameMapper": {
+      "^react-router/dom$": "<rootDir>/node_modules/react-router/dist/development/dom-export.js"
+    },
+    "transformIgnorePatterns": [
+      "node_modules/(?!three/)"
+    ],
+    "transform": {
+      "^.+\\.(js|jsx|mjs|cjs|ts|tsx)$": "<rootDir>/jest/babelTransform.js"
+    }
   }
 }
