@@ -111,12 +111,15 @@ body {
 
 .AppLayout-main {
   min-height: calc(100vh - var(--nav-height));
+  min-height: calc(100dvh - var(--nav-height));
 }
 
 /* Pages */
 
+/* dvh tracks mobile browser toolbars; browsers without it keep the vh line. */
 .HomePage {
   height: calc(100vh - var(--nav-height));
+  height: calc(100dvh - var(--nav-height));
   overflow: hidden;
 }
 

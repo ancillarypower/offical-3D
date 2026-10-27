@@ -90,12 +90,30 @@ tests:
 ---
 ### Requirement: Camera frames the model and auto-orbits with user control
 
-The system SHALL point the camera at the centre of the loaded model's bounding box from a distance at which the whole model is in view, SHALL slowly rotate the camera around that centre automatically, and SHALL let the user rotate the view by dragging and zoom by scroll wheel or pinch. Zoom SHALL be limited so the camera neither enters the model's bounding box nor moves out beyond three times the initial viewing distance. After the user releases the pointer, the automatic rotation SHALL continue.
+The system SHALL point the camera at the centre of the loaded model's bounding box from a distance at which the whole model is in view at the canvas's current aspect ratio, fitting the model's bounding sphere into whichever of the vertical and horizontal fields of view is narrower. When the canvas is resized, the system SHALL re-fit: it SHALL keep the camera's current viewing direction and its distance relative to the fit distance, and SHALL recompute the zoom limits. The system SHALL slowly rotate the camera around the model centre automatically, and SHALL let the user rotate the view by dragging and zoom by scroll wheel or pinch. Zoom SHALL be limited so the camera neither enters the model's bounding box nor moves out beyond three times the current fit distance. After the user releases the pointer, the automatic rotation SHALL continue.
 
 #### Scenario: Initial framing
 
 - **WHEN** the factory model finishes loading in a 1280×744 viewport
 - **THEN** the whole model is visible and the camera looks at the centre of its bounding box
+
+#### Scenario: Initial framing on a portrait screen
+
+- **WHEN** the factory model finishes loading in a 375×611 canvas
+- **THEN** the whole model is visible, with no part cut off at the left or right edge
+
+##### Example: fit distance by aspect ratio
+
+| Canvas (w×h) | Vertical FOV | Bounding radius | Expected camera distance |
+| ------------ | ------------ | --------------- | ------------------------ |
+| 600×600 | 45° | 1 | 1 / sin(22.5°) ≈ 2.613 |
+| 1200×600 | 45° | 1 | 1 / sin(22.5°) ≈ 2.613 (vertical is narrower) |
+| 300×600 | 45° | 1 | 1 / sin(atan(0.5 × tan 22.5°)) ≈ 4.931 (horizontal is narrower) |
+
+#### Scenario: Re-fit after resize
+
+- **WHEN** the model is shown at 1280×744 and the canvas is resized to 375×611
+- **THEN** the whole model is still visible, the camera looks from the same direction as before the resize, and the maximum zoom-out distance is three times the new fit distance
 
 #### Scenario: Drag to rotate
 
@@ -104,27 +122,12 @@ The system SHALL point the camera at the centre of the loaded model's bounding b
 
 
 <!-- @trace
-source: replace-home-sphere-with-factory-model
+source: fix-factory-scene-responsive-framing
 updated: 2026-10-27
 code:
-  - src/layout/AppLayout.js
-  - jest/babelTransform.js
-  - public/models/factory.glb
-  - src/App.css
-  - src/setupTests.js
-  - src/App.js
-  - src/auth/guards.js
-  - src/auth/AuthContext.js
-  - src/pages/LoginPage.js
-  - src/pages/ProfilePage.js
-  - src/RotatingSphere.js
-  - package.json
-  - src/index.js
   - src/FactoryScene.js
-  - src/pages/HomePage.js
+  - src/App.css
 tests:
-  - src/App.test.js
-  - src/auth/AuthContext.test.js
   - src/FactoryScene.test.js
 -->
 
@@ -165,5 +168,33 @@ code:
 tests:
   - src/App.test.js
   - src/auth/AuthContext.test.js
+  - src/FactoryScene.test.js
+-->
+
+---
+### Requirement: Render resolution is capped
+
+The system SHALL render the factory scene at a pixel ratio of the device pixel ratio capped at 2, both when the scene is created and after every resize.
+
+#### Scenario: High-density phone
+
+- **WHEN** the factory scene loads on a device whose `devicePixelRatio` is 3
+- **THEN** the renderer's pixel ratio is 2
+
+##### Example: pixel ratio cap
+
+| devicePixelRatio | Renderer pixel ratio |
+| ---------------- | -------------------- |
+| 1 | 1 |
+| 2 | 2 |
+| 3 | 2 |
+
+<!-- @trace
+source: fix-factory-scene-responsive-framing
+updated: 2026-10-27
+code:
+  - src/FactoryScene.js
+  - src/App.css
+tests:
   - src/FactoryScene.test.js
 -->

@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import * as THREE from 'three';
-import FactoryScene from './FactoryScene';
+import FactoryScene, { fitDistance } from './FactoryScene';
 
 // jsdom has no WebGL, so the renderer, loader and controls are faked. Plain classes,
 // not jest.fn(), because CRA's resetMocks would wipe mock implementations.
@@ -8,6 +8,25 @@ const mockLoads = [];
 const mockRenderers = [];
 const mockControls = [];
 const mockWebgl = { fail: false };
+const mockObservers = [];
+
+// jsdom has no ResizeObserver; tests fire `trigger()` after changing the mount size.
+class FakeResizeObserver {
+  constructor(callback) {
+    this.callback = callback;
+    this.disconnected = false;
+    mockObservers.push(this);
+  }
+  observe(target) {
+    this.target = target;
+  }
+  disconnect() {
+    this.disconnected = true;
+  }
+  trigger() {
+    this.callback([{ target: this.target }]);
+  }
+}
 
 jest.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
   GLTFLoader: class {
@@ -42,9 +61,12 @@ jest.mock('three', () => {
         if (mockWebgl.fail) throw new Error('WebGL unavailable');
         this.domElement = global.document.createElement('canvas');
         this.disposed = false;
+        this.pixelRatios = [];
         mockRenderers.push(this);
       }
-      setPixelRatio() {}
+      setPixelRatio(ratio) {
+        this.pixelRatios.push(ratio);
+      }
       setSize() {}
       render() {}
       dispose() {
@@ -67,6 +89,8 @@ beforeEach(() => {
   mockRenderers.length = 0;
   mockControls.length = 0;
   mockWebgl.fail = false;
+  mockObservers.length = 0;
+  global.ResizeObserver = FakeResizeObserver;
 });
 
 test('shows loading text until the model loads', () => {
@@ -153,6 +177,7 @@ test('disposes renderer, controls and canvas on unmount', () => {
   expect(materialDispose).toHaveBeenCalled();
   expect(mockRenderers[0].disposed).toBe(true);
   expect(canvas.isConnected).toBe(false);
+  expect(mockObservers[0].disconnected).toBe(true);
 });
 
 test('ignores a model that loads after unmount', () => {
@@ -180,4 +205,101 @@ test('shows error text when WebGL is unavailable', () => {
   expect(screen.getByRole('alert')).toHaveTextContent('Could not load the 3D model.');
   expect(container.querySelector('canvas')).toBeNull();
   expect(geometryDispose).toHaveBeenCalled();
+});
+
+// Gives the scene's mount a layout size, which jsdom otherwise reports as 0×0.
+function sizeMount(container, width, height) {
+  const mount = container.querySelector('.FactoryScene');
+  Object.defineProperty(mount, 'clientWidth', { configurable: true, value: width });
+  Object.defineProperty(mount, 'clientHeight', { configurable: true, value: height });
+}
+
+test.each([
+  [600, 600, 2.613],
+  [1200, 600, 2.613],
+  [300, 600, 4.931],
+])('fitDistance fits the narrower field of view (%i×%i)', (width, height, expected) => {
+  expect(fitDistance(1, 45, width / height)).toBeCloseTo(expected, 3);
+});
+
+test('fitDistance treats a 0 or NaN aspect as 1', () => {
+  expect(fitDistance(1, 45, 0)).toBeCloseTo(fitDistance(1, 45, 1));
+  expect(fitDistance(1, 45, NaN)).toBeCloseTo(fitDistance(1, 45, 1));
+});
+
+test('frames a portrait canvas so the whole model fits', () => {
+  const { container } = render(<FactoryScene />);
+  sizeMount(container, 375, 611);
+  act(() => mockLoads[0].onLoad(fakeGltf()));
+
+  const controls = mockControls[0];
+  const radius = Math.sqrt(12) / 2;
+  const fit = fitDistance(radius, 45, 375 / 611);
+  expect(controls.camera.aspect).toBeCloseTo(375 / 611);
+  expect(controls.camera.position.distanceTo(controls.target)).toBeCloseTo(fit);
+  // Wider than the vertical-only fit, which would clip the sides.
+  expect(fit).toBeGreaterThan(radius / Math.sin(THREE.MathUtils.degToRad(22.5)));
+  expect(controls.maxDistance).toBeCloseTo(3 * fit);
+});
+
+test('re-fits after resize keeping direction and zoom ratio', () => {
+  const { container } = render(<FactoryScene />);
+  sizeMount(container, 1280, 744);
+  act(() => mockLoads[0].onLoad(fakeGltf()));
+  const { camera, target } = mockControls[0];
+  const radius = Math.sqrt(12) / 2;
+  const wideFit = fitDistance(radius, 45, 1280 / 744);
+
+  // The user zooms out to 1.5× the fit distance before the resize.
+  const direction = camera.position.clone().sub(target).normalize();
+  camera.position.copy(target).addScaledVector(direction, 1.5 * wideFit);
+
+  sizeMount(container, 375, 611);
+  expect(mockObservers).toHaveLength(1);
+  expect(mockObservers[0].target).toBe(container.querySelector('.FactoryScene'));
+  act(() => mockObservers[0].trigger());
+
+  const portraitFit = fitDistance(radius, 45, 375 / 611);
+  const offset = camera.position.clone().sub(target);
+  expect(camera.aspect).toBeCloseTo(375 / 611);
+  expect(offset.clone().normalize().distanceTo(direction)).toBeCloseTo(0);
+  expect(offset.length()).toBeCloseTo(1.5 * portraitFit);
+  expect(mockControls[0].maxDistance).toBeCloseTo(3 * portraitFit);
+  expect(camera.near).toBeCloseTo(portraitFit / 100);
+  expect(camera.far).toBeCloseTo(portraitFit * 10);
+});
+
+test('ignores a resize to 0×0', () => {
+  const { container } = render(<FactoryScene />);
+  sizeMount(container, 1280, 744);
+  act(() => mockLoads[0].onLoad(fakeGltf()));
+  const { camera } = mockControls[0];
+  const before = camera.position.clone();
+
+  sizeMount(container, 0, 0);
+  act(() => mockObservers[0].trigger());
+
+  expect(camera.aspect).toBeCloseTo(1280 / 744);
+  expect(camera.position.distanceTo(before)).toBeCloseTo(0);
+});
+
+test.each([
+  [1, 1],
+  [2, 2],
+  [3, 2],
+])('caps pixel ratio at 2 (devicePixelRatio %i → %i)', (deviceRatio, expected) => {
+  const original = window.devicePixelRatio;
+  Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: deviceRatio });
+  try {
+    const { container } = render(<FactoryScene />);
+    sizeMount(container, 375, 611);
+    act(() => mockLoads[0].onLoad(fakeGltf()));
+    sizeMount(container, 611, 375);
+    act(() => mockObservers[0].trigger());
+
+    // Once on creation and once after the resize.
+    expect(mockRenderers[0].pixelRatios).toEqual([expected, expected]);
+  } finally {
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: original });
+  }
 });

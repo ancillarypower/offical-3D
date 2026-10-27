@@ -214,7 +214,7 @@ tests:
 ---
 ### Requirement: Home page shows the factory scene
 
-The system SHALL render the factory scene (see the `factory-scene` capability) on the Home page (`/`) for every visitor, signed in or not, filling the content area below the navigation bar, and SHALL unmount it when the user navigates away from Home.
+The system SHALL render the factory scene (see the `factory-scene` capability) on the Home page (`/`) for every visitor, signed in or not, filling the content area below the navigation bar, and SHALL unmount it when the user navigates away from Home. The content area's height SHALL be the visible viewport height minus the navigation bar height, where the visible viewport height follows mobile browser toolbars as they expand or collapse (`dvh`), falling back to the layout viewport height (`vh`) in browsers without `dvh` support. The Home page SHALL NOT scroll.
 
 #### Scenario: Navigate between Home and Profile
 
@@ -226,27 +226,17 @@ The system SHALL render the factory scene (see the `factory-scene` capability) o
 - **WHEN** a visitor who is not signed in opens `/`
 - **THEN** exactly one factory scene is present
 
+#### Scenario: Mobile browser toolbar visible
+
+- **WHEN** a visitor opens `/` in a mobile browser whose address bar is expanded
+- **THEN** the bottom edge of the factory scene sits at the bottom of the visible screen and the page does not scroll
+
 <!-- @trace
-source: replace-home-sphere-with-factory-model
+source: fix-factory-scene-responsive-framing
 updated: 2026-10-27
 code:
-  - src/layout/AppLayout.js
-  - jest/babelTransform.js
-  - public/models/factory.glb
-  - src/App.css
-  - src/setupTests.js
-  - src/App.js
-  - src/auth/guards.js
-  - src/auth/AuthContext.js
-  - src/pages/LoginPage.js
-  - src/pages/ProfilePage.js
-  - src/RotatingSphere.js
-  - package.json
-  - src/index.js
   - src/FactoryScene.js
-  - src/pages/HomePage.js
+  - src/App.css
 tests:
-  - src/App.test.js
-  - src/auth/AuthContext.test.js
   - src/FactoryScene.test.js
 -->

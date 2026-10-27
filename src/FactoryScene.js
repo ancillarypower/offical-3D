@@ -5,6 +5,18 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 const MODEL_URL = `${process.env.PUBLIC_URL}/models/factory.glb`;
 
+// Phones report 3; rendering at 2 draws 4× instead of 9× the base pixel count.
+const pixelRatio = () => Math.min(window.devicePixelRatio, 2);
+
+// Camera distance at which a bounding sphere of `radius` fits whichever of the
+// vertical and horizontal fields of view is narrower at this aspect ratio.
+export function fitDistance(radius, verticalFovDeg, aspect) {
+  const safeAspect = aspect > 0 ? aspect : 1;
+  const halfV = THREE.MathUtils.degToRad(verticalFovDeg / 2);
+  const halfH = Math.atan(Math.tan(halfV) * safeAspect);
+  return radius / Math.sin(Math.min(halfV, halfH));
+}
+
 // Free GPU buffers for every geometry and material in a loaded model.
 function disposeModel(root) {
   root.traverse((node) => {
@@ -42,7 +54,7 @@ function FactoryScene() {
         setStatus('error');
         return;
       }
-      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setPixelRatio(pixelRatio());
       renderer.setSize(width, height);
       mount.appendChild(renderer.domElement);
 
@@ -60,19 +72,19 @@ function FactoryScene() {
       gltf.animations.forEach((clip) => mixer.clipAction(clip).play());
       const timer = new THREE.Timer();
 
-      // Fit the model's bounding sphere into the vertical field of view.
+      // Fit the model's bounding sphere into the narrower field of view.
       const box = new THREE.Box3().setFromObject(gltf.scene);
       const centre = box.getCenter(new THREE.Vector3());
       const radius = box.getSize(new THREE.Vector3()).length() / 2;
       const camera = new THREE.PerspectiveCamera(45, width / height || 1);
-      const distance = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2));
-      camera.near = distance / 100;
-      camera.far = distance * 10;
-      camera.position.copy(centre).addScaledVector(new THREE.Vector3(1, 0.6, 1).normalize(), distance);
+      let fit = fitDistance(radius, camera.fov, camera.aspect);
+      camera.near = fit / 100;
+      camera.far = fit * 10;
+      camera.position.copy(centre).addScaledVector(new THREE.Vector3(1, 0.6, 1).normalize(), fit);
       camera.updateProjectionMatrix();
 
       // Slow auto-orbit that resumes after the user drags; zoom stays outside the
-      // bounding sphere and within 3× the framing distance.
+      // bounding sphere and within 3× the fit distance.
       const controls = new OrbitControls(camera, renderer.domElement);
       controls.target.copy(centre);
       controls.enableDamping = true;
@@ -80,7 +92,7 @@ function FactoryScene() {
       controls.autoRotate = true;
       controls.autoRotateSpeed = 0.5;
       controls.minDistance = radius;
-      controls.maxDistance = 3 * distance;
+      controls.maxDistance = 3 * fit;
       controls.update();
 
       let frameId;
@@ -93,18 +105,31 @@ function FactoryScene() {
       };
       animate();
 
-      const handleResize = () => {
+      // Re-fit whenever the container changes size (window resize, rotation, or a
+      // dvh change when mobile toolbars move). The camera keeps its direction and
+      // its zoom relative to the fit distance.
+      const resizeObserver = new ResizeObserver(() => {
         const w = mount.clientWidth;
         const h = mount.clientHeight;
-        camera.aspect = w / h;
-        camera.updateProjectionMatrix();
+        if (!w || !h) return;
+        renderer.setPixelRatio(pixelRatio());
         renderer.setSize(w, h);
-      };
-      window.addEventListener('resize', handleResize);
+        camera.aspect = w / h;
+        const nextFit = fitDistance(radius, camera.fov, camera.aspect);
+        const offset = camera.position.clone().sub(controls.target);
+        camera.position.copy(controls.target).addScaledVector(offset, nextFit / fit);
+        fit = nextFit;
+        camera.near = fit / 100;
+        camera.far = fit * 10;
+        camera.updateProjectionMatrix();
+        controls.maxDistance = 3 * fit;
+        controls.update();
+      });
+      resizeObserver.observe(mount);
 
       teardown = () => {
         cancelAnimationFrame(frameId);
-        window.removeEventListener('resize', handleResize);
+        resizeObserver.disconnect();
         mixer.stopAllAction();
         mixer.uncacheRoot(gltf.scene);
         controls.dispose();
