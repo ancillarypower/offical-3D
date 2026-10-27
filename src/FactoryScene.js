@@ -47,19 +47,20 @@ function FactoryScene() {
 
       let renderer;
       try {
-        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
       } catch {
         // WebGL unavailable: same outcome as a failed download.
         disposeModel(gltf.scene);
         setStatus('error');
         return;
       }
+      // Transparent clear so the CSS sky gradient on .FactoryScene shows through.
+      renderer.setClearColor(0x000000, 0);
       renderer.setPixelRatio(pixelRatio());
       renderer.setSize(width, height);
       mount.appendChild(renderer.domElement);
 
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x0b0d17);
       scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 1.2));
       const sun = new THREE.DirectionalLight(0xffffff, 2);
       sun.position.set(50, 100, 70);

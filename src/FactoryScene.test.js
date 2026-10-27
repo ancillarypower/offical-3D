@@ -57,18 +57,26 @@ jest.mock('three', () => {
   return {
     ...actual,
     WebGLRenderer: class {
-      constructor() {
+      constructor(options) {
         if (mockWebgl.fail) throw new Error('WebGL unavailable');
+        this.options = options;
         this.domElement = global.document.createElement('canvas');
         this.disposed = false;
         this.pixelRatios = [];
+        this.clearColors = [];
+        this.lastScene = null;
         mockRenderers.push(this);
       }
       setPixelRatio(ratio) {
         this.pixelRatios.push(ratio);
       }
       setSize() {}
-      render() {}
+      setClearColor(color, alpha) {
+        this.clearColors.push([color, alpha]);
+      }
+      render(scene) {
+        this.lastScene = scene;
+      }
       dispose() {
         this.disposed = true;
       }
@@ -302,4 +310,14 @@ test.each([
   } finally {
     Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: original });
   }
+});
+
+test('renders on a transparent canvas over the CSS gradient', () => {
+  render(<FactoryScene />);
+  act(() => mockLoads[0].onLoad(fakeGltf()));
+
+  const renderer = mockRenderers[0];
+  expect(renderer.options).toMatchObject({ antialias: true, alpha: true });
+  expect(renderer.clearColors).toEqual([[0x000000, 0]]);
+  expect(renderer.lastScene.background).toBeNull();
 });
