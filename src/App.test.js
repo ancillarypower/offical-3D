@@ -5,6 +5,7 @@ import App from './App';
 import { STORAGE_KEY } from './auth/AuthContext';
 
 jest.mock('./FactoryScene', () => () => <div data-testid="factory-scene" />);
+jest.mock('./ArchimedesScene', () => () => <div data-testid="archimedes-scene" />);
 
 function LocationDisplay() {
   return <div data-testid="location">{useLocation().pathname}</div>;
@@ -69,22 +70,22 @@ describe('route guards', () => {
 });
 
 describe('navigation bar', () => {
-  test('nav shows Home, Profile, Logout in order', () => {
+  test('nav shows Home, Archimedes, Profile, Logout in order', () => {
     renderApp('/', { user: 'amy' });
     const nav = screen.getByRole('navigation');
     const items = Array.from(nav.querySelectorAll('a, button'))
       .map((el) => el.textContent)
       .filter((text) => text !== 'Menu');
-    expect(items).toEqual(['Home', 'Profile', 'Logout']);
+    expect(items).toEqual(['Home', 'Archimedes', 'Profile', 'Logout']);
   });
 
-  test('nav for signed-out visitor shows Home, Profile, Log in', () => {
+  test('nav for signed-out visitor shows Home, Archimedes, Profile, Log in', () => {
     renderApp('/');
     const nav = screen.getByRole('navigation');
     const items = Array.from(nav.querySelectorAll('a, button'))
       .map((el) => el.textContent)
       .filter((text) => text !== 'Menu');
-    expect(items).toEqual(['Home', 'Profile', 'Log in']);
+    expect(items).toEqual(['Home', 'Archimedes', 'Profile', 'Log in']);
     expect(screen.getByRole('link', { name: 'Log in' })).toHaveAttribute('href', '/login');
   });
 
@@ -120,6 +121,31 @@ test('factory scene present on Home and absent on Profile', () => {
   userEvent.click(screen.getByRole('link', { name: 'Home' }));
   expect(screen.getAllByTestId('factory-scene')).toHaveLength(1);
   expect(screen.getByTestId('factory-scene').closest('.HomePage')).toBeInTheDocument();
+});
+
+describe('Archimedes page', () => {
+  test('signed-out visitor sees the Archimedes scene with its link current', () => {
+    renderApp('/archimedes');
+    expect(currentPath()).toBe('/archimedes');
+    expect(screen.getAllByTestId('archimedes-scene')).toHaveLength(1);
+    expect(screen.getByTestId('archimedes-scene').closest('.ArchimedesPage')).toBeInTheDocument();
+    expect(screen.queryByTestId('factory-scene')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Archimedes' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
+  });
+
+  test('navigating Home → Archimedes → Home swaps the scenes', () => {
+    renderApp('/');
+    userEvent.click(screen.getByRole('link', { name: 'Archimedes' }));
+    expect(currentPath()).toBe('/archimedes');
+    expect(screen.getAllByTestId('archimedes-scene')).toHaveLength(1);
+    expect(screen.queryByTestId('factory-scene')).not.toBeInTheDocument();
+
+    userEvent.click(screen.getByRole('link', { name: 'Home' }));
+    expect(currentPath()).toBe('/');
+    expect(screen.getAllByTestId('factory-scene')).toHaveLength(1);
+    expect(screen.queryByTestId('archimedes-scene')).not.toBeInTheDocument();
+  });
 });
 
 test('profile shows username amy', () => {

@@ -117,13 +117,15 @@ body {
 /* Pages */
 
 /* dvh tracks mobile browser toolbars; browsers without it keep the vh line. */
-.HomePage {
+.HomePage,
+.ArchimedesPage {
   height: calc(100vh - var(--nav-height));
   height: calc(100dvh - var(--nav-height));
   overflow: hidden;
 }
 
-.FactoryScene {
+.FactoryScene,
+.ArchimedesScene {
   position: relative;
   width: 100%;
   height: 100%;
@@ -132,7 +134,8 @@ body {
 }
 
 /* Dark label keeps the status text legible over the light sky gradient. */
-.FactoryScene-message {
+.FactoryScene-message,
+.ArchimedesScene-message {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -145,7 +148,8 @@ body {
   white-space: nowrap;
 }
 
-.FactoryScene-message[role='alert'] {
+.FactoryScene-message[role='alert'],
+.ArchimedesScene-message[role='alert'] {
   color: var(--error);
 }
 

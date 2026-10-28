@@ -4,20 +4,11 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import { disposeModel, fitDistance, pixelRatio } from './threeHelpers';
+
+export { fitDistance };
 
 const MODEL_URL = `${process.env.PUBLIC_URL}/models/factory0.glb`;
-
-// Phones report 3; rendering at 2 draws 4× instead of 9× the base pixel count.
-const pixelRatio = () => Math.min(window.devicePixelRatio, 2);
-
-// Camera distance at which a bounding sphere of `radius` fits whichever of the
-// vertical and horizontal fields of view is narrower at this aspect ratio.
-export function fitDistance(radius, verticalFovDeg, aspect) {
-  const safeAspect = aspect > 0 ? aspect : 1;
-  const halfV = THREE.MathUtils.degToRad(verticalFovDeg / 2);
-  const halfH = Math.atan(Math.tan(halfV) * safeAspect);
-  return radius / Math.sin(Math.min(halfV, halfH));
-}
 
 // Top-level model nodes that drive along the road, e.g. CarE0, CarW3, Truck3.
 const VEHICLE_NAME = /^(Car[A-Z]+\d+|Truck\d+)$/;
@@ -66,15 +57,6 @@ const FOCUS_MARGIN = 1.2;
 const FLIGHT_SECONDS = 1;
 // A press and release further apart than this is an orbit drag, not a click.
 const CLICK_SLOP_PX = 5;
-
-// Free GPU buffers for every geometry and material in a loaded model.
-function disposeModel(root) {
-  root.traverse((node) => {
-    if (node.geometry) node.geometry.dispose();
-    const materials = Array.isArray(node.material) ? node.material : [node.material];
-    materials.forEach((material) => material && material.dispose());
-  });
-}
 
 function FactoryScene() {
   const mountRef = useRef(null);

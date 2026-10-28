@@ -9,6 +9,7 @@ gsap.registerPlugin(useGSAP);
 // Add a page: one entry here plus one <Route> in App.js.
 export const NAV_ITEMS = [
   { to: '/', label: 'Home', end: true },
+  { to: '/archimedes', label: 'Archimedes' },
   { to: '/profile', label: 'Profile' },
 ];
 

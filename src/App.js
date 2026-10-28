@@ -3,6 +3,7 @@ import './App.css';
 import { AuthProvider } from './auth/AuthContext';
 import { RedirectIfAuthed, RequireAuth } from './auth/guards';
 import AppLayout from './layout/AppLayout';
+import ArchimedesPage from './pages/ArchimedesPage';
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
 import ProfilePage from './pages/ProfilePage';
@@ -22,6 +23,7 @@ function App() {
           />
           <Route element={<AppLayout />}>
             <Route path="/" element={<HomePage />} />
+            <Route path="/archimedes" element={<ArchimedesPage />} />
             <Route
               path="/profile"
               element={
