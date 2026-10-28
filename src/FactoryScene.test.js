@@ -1,6 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
+import gsap from 'gsap';
 import * as THREE from 'three';
-import FactoryScene, { fitDistance, updateVehicleVisibility } from './FactoryScene';
+import FactoryScene, { BUILDINGS, FOCUS_DIRECTION, fitDistance, pickBuilding, updateVehicleVisibility } from './FactoryScene';
 
 // jsdom has no WebGL, so the renderer, loader and controls are faked. Plain classes,
 // not jest.fn(), because CRA's resetMocks would wipe mock implementations.
@@ -44,7 +45,10 @@ jest.mock('three/examples/jsm/controls/OrbitControls.js', () => {
         Object.assign(this, { camera, domElement, target: new Vector3(), disposed: false });
         mockControls.push(this);
       }
-      update() {}
+      // The real controls orient the camera towards the target on every update.
+      update() {
+        this.camera.lookAt(this.target);
+      }
       dispose() {
         this.disposed = true;
       }
@@ -413,7 +417,497 @@ test('exposes the dev debug handle and removes it on unmount', () => {
   // Jest runs with NODE_ENV=test, which counts as a non-production build.
   expect(window.__FACTORY_SCENE__.vehicles).toEqual([model.carE0, model.carW0]);
   expect(window.__FACTORY_SCENE__.groundBox.max.x).toBeCloseTo(80);
+  expect(window.__FACTORY_SCENE__.camera).toBe(mockControls[0].camera);
+  expect(window.__FACTORY_SCENE__.controls).toBe(mockControls[0]);
+  expect(window.__FACTORY_SCENE__.buildings).toEqual([]);
+  expect(window.__FACTORY_SCENE__.getFocus()).toEqual({ focusedId: null, flying: false });
 
   unmount();
   expect(window.__FACTORY_SCENE__).toBeUndefined();
+});
+
+// Builds a model root with named top-level nodes; a dotted name such as
+// 'CarE0.body' adds a child mesh under the top-level node 'CarE0'.
+function pickScene(...names) {
+  const root = new THREE.Group();
+  const nodes = {};
+  names.forEach((path) => {
+    const [top, child] = path.split('.');
+    if (!nodes[top]) {
+      nodes[top] = new THREE.Group();
+      nodes[top].name = top;
+      root.add(nodes[top]);
+    }
+    if (child) {
+      nodes[path] = new THREE.Mesh();
+      nodes[path].name = child;
+      nodes[top].add(nodes[path]);
+    }
+  });
+  return { root, nodes };
+}
+
+test.each([
+  ['OffWinF1_2', [], 'Office'],
+  ['GuardHouse', [], 'GuardHouse'],
+  ['Trunk3', ['Office'], null],
+  ['CarE0.body', ['GuardHouse'], 'GuardHouse', { hidden: 'CarE0' }],
+  [null, [], null],
+])('pickBuilding resolves the first visible hit (%s first)', (first, behind, expected, options = {}) => {
+  const names = [first, ...behind].filter(Boolean);
+  const { root, nodes } = pickScene(...names);
+  if (options.hidden) nodes[options.hidden].visible = false;
+  const intersections = names.map((name, i) => ({ object: nodes[name], distance: i + 1 }));
+
+  const picked = pickBuilding(intersections, root, BUILDINGS);
+
+  expect(picked ? picked.id : null).toBe(expected);
+});
+
+test('BUILDINGS parts match the factory0.glb node names', () => {
+  const partsOf = (id) => BUILDINGS.find((building) => building.id === id).parts;
+  const office = [
+    'Office', 'OfficeRoof', 'OfficeCanopy', 'OfficeEntrance', 'OfficeSolar0', 'OfficeSolar2',
+    'OffWinF0_0', 'OffWinF3_3', 'OffWinS0_0', 'OffWinS3_2',
+  ];
+  office.forEach((name) => expect(partsOf('Office').test(name)).toBe(true));
+  ['GuardHouse', 'GuardHouseWin'].forEach((name) => expect(partsOf('GuardHouse').test(name)).toBe(true));
+  ['MainHall', 'Corridor', 'GuardHouseX'].forEach((name) => {
+    expect(BUILDINGS.some((building) => building.parts.test(name))).toBe(false);
+  });
+  expect(BUILDINGS.map(({ id, label }) => [id, label])).toEqual([
+    ['Office', 'Office'],
+    ['GuardHouse', 'Guard House'],
+  ]);
+});
+
+// A site shaped like factory0.glb around its two clickable buildings.
+function fakeSite({ withBuildings = true } = {}) {
+  const scene = new THREE.Group();
+  const box = (name, [w, h, d], [x, y, z]) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshBasicMaterial());
+    mesh.name = name;
+    mesh.position.set(x, y, z);
+    scene.add(mesh);
+    return mesh;
+  };
+  const site = { scene, animations: [] };
+  site.ground = box('Ground', [160, 0.1, 160], [0, -0.05, 0]);
+  if (withBuildings) {
+    site.office = box('Office', [14, 14, 12], [-32, 7, 8]);
+    site.guardHouse = box('GuardHouse', [3, 2.8, 3], [-22, 1.4, 38]);
+  }
+  return site;
+}
+
+const VIEW = { width: 1280, height: 800 };
+
+function loadSite(site = fakeSite()) {
+  const view = render(<FactoryScene />);
+  sizeMount(view.container, VIEW.width, VIEW.height);
+  act(() => mockLoads[0].onLoad(site));
+  const canvas = mockRenderers[0].domElement;
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0, ...VIEW, right: VIEW.width, bottom: VIEW.height });
+  const controls = mockControls[0];
+  return { ...view, site, canvas, controls, camera: controls.camera };
+}
+
+const boxOf = (object) => new THREE.Box3().setFromObject(object);
+const centreOf = (object) => boxOf(object).getCenter(new THREE.Vector3());
+const radiusOf = (object) => boxOf(object).getSize(new THREE.Vector3()).length() / 2;
+
+// Screen position of an object's centre with the camera as the controls left it.
+function screenPointOf(object, { camera, controls }) {
+  controls.update();
+  camera.updateMatrixWorld();
+  const p = centreOf(object).project(camera);
+  return { x: ((p.x + 1) / 2) * VIEW.width, y: ((1 - p.y) / 2) * VIEW.height };
+}
+
+// jsdom 16 has no PointerEvent; a MouseEvent with the pointer type carries clientX/Y.
+function click(canvas, at, moveBy = 0) {
+  act(() => {
+    canvas.dispatchEvent(new MouseEvent('pointerdown', { clientX: at.x, clientY: at.y, bubbles: true }));
+    canvas.dispatchEvent(new MouseEvent('pointerup', { clientX: at.x + moveBy, clientY: at.y, bubbles: true }));
+  });
+}
+
+const pressEscape = () => act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
+const poseOf = ({ camera, controls }) => ({ position: camera.position.clone(), target: controls.target.clone() });
+
+function expectPose({ camera, controls }, pose) {
+  ['x', 'y', 'z'].forEach((axis) => {
+    expect(camera.position[axis]).toBeCloseTo(pose.position[axis], 2);
+    expect(controls.target[axis]).toBeCloseTo(pose.target[axis], 2);
+  });
+}
+
+const flights = () => gsap.globalTimeline.getChildren();
+const finishFlight = () => act(() => flights().forEach((tween) => tween.progress(1)));
+
+function expectFocusedOn(object, { camera, controls }) {
+  const centre = centreOf(object);
+  const distance = fitDistance(radiusOf(object), camera.fov, camera.aspect) * 1.2;
+  const position = centre.clone().addScaledVector(FOCUS_DIRECTION, distance);
+  ['x', 'y', 'z'].forEach((axis) => {
+    expect(controls.target[axis]).toBeCloseTo(centre[axis], 2);
+    expect(camera.position[axis]).toBeCloseTo(position[axis], 2);
+  });
+}
+
+test('clicking a building flies the camera to it', () => {
+  const scene = loadSite();
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+
+  expect(scene.controls.autoRotate).toBe(false);
+  expect(scene.controls.enabled).toBe(false);
+  finishFlight();
+
+  expectFocusedOn(scene.site.office, scene);
+  expect(scene.controls.autoRotate).toBe(false);
+  expect(scene.controls.enabled).toBe(true);
+  expect(scene.controls.minDistance).toBeCloseTo(radiusOf(scene.site.office));
+});
+
+test('a 6 px drag is not a click', () => {
+  const scene = loadSite();
+  click(scene.canvas, screenPointOf(scene.site.guardHouse, scene), 6);
+
+  expect(flights()).toHaveLength(0);
+  expect(scene.controls.autoRotate).toBe(true);
+});
+
+test('a 5 px move still counts as a click', () => {
+  const scene = loadSite();
+  click(scene.canvas, screenPointOf(scene.site.guardHouse, scene), 5);
+
+  expect(flights()).toHaveLength(1);
+  finishFlight();
+  expectFocusedOn(scene.site.guardHouse, scene);
+});
+
+test('clicking the other building switches focus and keeps the overview pose', () => {
+  const scene = loadSite();
+  const overview = poseOf(scene);
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+  finishFlight();
+  click(scene.canvas, screenPointOf(scene.site.guardHouse, scene));
+  finishFlight();
+
+  expectFocusedOn(scene.site.guardHouse, scene);
+  expect(scene.controls.minDistance).toBeCloseTo(radiusOf(scene.site.guardHouse));
+
+  pressEscape();
+  finishFlight();
+  expectPose(scene, overview);
+});
+
+test('clicks during a flight are ignored', () => {
+  const scene = loadSite();
+  const guardHouseAt = screenPointOf(scene.site.guardHouse, scene);
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+  click(scene.canvas, guardHouseAt);
+
+  expect(flights()).toHaveLength(1);
+  finishFlight();
+  expectFocusedOn(scene.site.office, scene);
+});
+
+test('clicking the focused building again changes nothing', () => {
+  const scene = loadSite();
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+  finishFlight();
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+
+  expect(flights()).toHaveLength(0);
+  expectFocusedOn(scene.site.office, scene);
+});
+
+test('a model without building nodes has nothing clickable', () => {
+  const scene = loadSite(fakeSite({ withBuildings: false }));
+  click(scene.canvas, { x: VIEW.width / 2, y: VIEW.height / 2 });
+
+  expect(flights()).toHaveLength(0);
+  expect(scene.controls.autoRotate).toBe(true);
+});
+
+test('the flight swings around instead of passing through the target', () => {
+  const scene = loadSite();
+  const centre = centreOf(scene.site.office);
+  // Look at the Office from the far side (FOCUS_DIRECTION mirrored in x and z), 60 units away.
+  const farSide = new THREE.Vector3(-FOCUS_DIRECTION.x, FOCUS_DIRECTION.y, -FOCUS_DIRECTION.z);
+  scene.controls.target.copy(centre);
+  scene.camera.position.copy(centre).addScaledVector(farSide, 60);
+  scene.controls.update(); // as the next frame would
+  click(scene.canvas, { x: VIEW.width / 2, y: VIEW.height / 2 });
+  expect(flights()).toHaveLength(1);
+  const focusDistance = fitDistance(radiusOf(scene.site.office), scene.camera.fov, scene.camera.aspect) * 1.2;
+
+  act(() => flights().forEach((tween) => tween.progress(0.5)));
+
+  // Swinging keeps the camera about halfway between the two distances from the target;
+  // a straight line would cut across to well under 0.9 × the shorter one.
+  expect(scene.camera.position.distanceTo(scene.controls.target)).toBeGreaterThan(
+    Math.min(60, focusDistance) * 0.9,
+  );
+  finishFlight();
+  expectFocusedOn(scene.site.office, scene);
+});
+
+test('Esc returns to the saved overview', () => {
+  const scene = loadSite();
+  const overview = poseOf(scene);
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+  finishFlight();
+
+  pressEscape();
+  expect(flights()).toHaveLength(1);
+  expect(scene.controls.enabled).toBe(false);
+  finishFlight();
+
+  expectPose(scene, overview);
+  expect(scene.controls.autoRotate).toBe(true);
+  expect(scene.controls.enabled).toBe(true);
+  expect(scene.controls.minDistance).toBeCloseTo(radiusOf(scene.site.scene));
+});
+
+test('clicking empty space returns to the overview', () => {
+  const scene = loadSite();
+  const overview = poseOf(scene);
+  click(scene.canvas, screenPointOf(scene.site.guardHouse, scene));
+  finishFlight();
+
+  // Bottom-right corner: the ground in front of the Guard House.
+  click(scene.canvas, { x: VIEW.width - 1, y: VIEW.height - 1 });
+  finishFlight();
+
+  expectPose(scene, overview);
+  expect(scene.controls.autoRotate).toBe(true);
+});
+
+test('Esc during the fly-in is ignored', () => {
+  const scene = loadSite();
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+  pressEscape();
+
+  expect(flights()).toHaveLength(1);
+  finishFlight();
+  expectFocusedOn(scene.site.office, scene);
+});
+
+test('Esc in the overview does nothing', () => {
+  const scene = loadSite();
+  const overview = poseOf(scene);
+  pressEscape();
+
+  expect(flights()).toHaveLength(0);
+  expectPose(scene, overview);
+  expect(scene.controls.autoRotate).toBe(true);
+});
+
+// Runs the scene's latest animation frame (gsap's ticker also queues frames, so pick ours).
+function captureFrames() {
+  const frames = [];
+  jest.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => frames.push(callback));
+  return () => act(() => frames.filter((frame) => frame.name === 'animate').pop()());
+}
+
+const visibleLabels = (container) =>
+  [...container.querySelectorAll('.FactoryScene-label')]
+    .filter((label) => label.style.display !== 'none')
+    .map((label) => label.textContent);
+
+test("shows the focused building's name after the flight", () => {
+  const renderFrame = captureFrames();
+  const scene = loadSite();
+  expect(scene.container.querySelectorAll('.FactoryScene-label')).toHaveLength(2);
+  expect(visibleLabels(scene.container)).toEqual([]);
+
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+  renderFrame();
+  expect(visibleLabels(scene.container)).toEqual([]);
+
+  finishFlight();
+  renderFrame();
+  expect(visibleLabels(scene.container)).toEqual(['Office']);
+});
+
+test('switching buildings switches the label', () => {
+  const renderFrame = captureFrames();
+  const scene = loadSite();
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+  finishFlight();
+
+  click(scene.canvas, screenPointOf(scene.site.guardHouse, scene));
+  renderFrame();
+  expect(visibleLabels(scene.container)).toEqual([]);
+
+  finishFlight();
+  renderFrame();
+  expect(visibleLabels(scene.container)).toEqual(['Guard House']);
+});
+
+test('returning hides the label', () => {
+  const renderFrame = captureFrames();
+  const scene = loadSite();
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+  finishFlight();
+
+  pressEscape();
+  renderFrame();
+  expect(visibleLabels(scene.container)).toEqual([]);
+
+  finishFlight();
+  renderFrame();
+  expect(visibleLabels(scene.container)).toEqual([]);
+});
+
+test('the label layer does not block pointer events', () => {
+  const scene = loadSite();
+  const layer = scene.container.querySelector('.FactoryScene-label').parentElement;
+
+  expect(layer).not.toBe(scene.canvas);
+  expect(layer.style.pointerEvents).toBe('none');
+});
+
+test('the cursor is a hand over a building only', () => {
+  const scene = loadSite();
+  const move = (at, buttons = 0) =>
+    act(() => {
+      scene.canvas.dispatchEvent(new MouseEvent('pointermove', { clientX: at.x, clientY: at.y, buttons }));
+    });
+
+  move(screenPointOf(scene.site.office, scene));
+  expect(scene.canvas.style.cursor).toBe('pointer');
+
+  move({ x: VIEW.width - 1, y: VIEW.height - 1 });
+  expect(scene.canvas.style.cursor).toBe('');
+
+  // While dragging, the cursor is left alone.
+  move(screenPointOf(scene.site.office, scene), 1);
+  expect(scene.canvas.style.cursor).toBe('');
+});
+
+test('resize while focused keeps the camera and rescales the return pose', () => {
+  const scene = loadSite();
+  const overview = poseOf(scene);
+  const overviewDirection = overview.position.clone().sub(overview.target).normalize();
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+  finishFlight();
+  const focusedPosition = scene.camera.position.clone();
+
+  sizeMount(scene.container, 375, 611);
+  act(() => mockObservers[0].trigger());
+  ['x', 'y', 'z'].forEach((axis) => expect(scene.camera.position[axis]).toBeCloseTo(focusedPosition[axis], 6));
+
+  pressEscape();
+  finishFlight();
+  const offset = scene.camera.position.clone().sub(scene.controls.target);
+  const direction = offset.clone().normalize();
+  ['x', 'y', 'z'].forEach((axis) => expect(direction[axis]).toBeCloseTo(overviewDirection[axis], 6));
+  expect(offset.length()).toBeCloseTo(fitDistance(radiusOf(scene.site.scene), 45, 375 / 611), 4);
+});
+
+test('resize during the return flight lands on the re-fitted overview', () => {
+  const scene = loadSite();
+  const overview = poseOf(scene);
+  const overviewDirection = overview.position.clone().sub(overview.target).normalize();
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+  finishFlight();
+
+  pressEscape();
+  act(() => flights().forEach((tween) => tween.progress(0.5)));
+  sizeMount(scene.container, 375, 611);
+  act(() => mockObservers[0].trigger());
+  finishFlight();
+
+  const offset = scene.camera.position.clone().sub(scene.controls.target);
+  const direction = offset.clone().normalize();
+  ['x', 'y', 'z'].forEach((axis) => expect(direction[axis]).toBeCloseTo(overviewDirection[axis], 6));
+  expect(offset.length()).toBeCloseTo(fitDistance(radiusOf(scene.site.scene), 45, 375 / 611), 4);
+});
+
+// MouseEvent has no pointerId in jsdom 16; set it so touches can be told apart.
+function pointer(canvas, type, at, { id = 1, button = 0 } = {}) {
+  const event = new MouseEvent(type, { clientX: at.x, clientY: at.y, button, bubbles: true });
+  Object.defineProperty(event, 'pointerId', { value: id });
+  canvas.dispatchEvent(event);
+}
+
+test('right and middle clicks do not focus a building', () => {
+  const scene = loadSite();
+  const at = screenPointOf(scene.site.office, scene);
+  [1, 2].forEach((button) => {
+    act(() => {
+      pointer(scene.canvas, 'pointerdown', at, { button });
+      pointer(scene.canvas, 'pointerup', at, { button });
+    });
+  });
+
+  expect(flights()).toHaveLength(0);
+  expect(scene.controls.autoRotate).toBe(true);
+});
+
+test('lifting fingers after a two-finger touch is not a click', () => {
+  const scene = loadSite();
+  const at = screenPointOf(scene.site.office, scene);
+  const other = { x: at.x + 2, y: at.y };
+  act(() => {
+    pointer(scene.canvas, 'pointerdown', at, { id: 1 });
+    pointer(scene.canvas, 'pointerdown', other, { id: 2 });
+    pointer(scene.canvas, 'pointerup', other, { id: 2 });
+    pointer(scene.canvas, 'pointerup', at, { id: 1 });
+  });
+  expect(flights()).toHaveLength(0);
+
+  // A later single tap still works.
+  act(() => {
+    pointer(scene.canvas, 'pointerdown', at, { id: 3 });
+    pointer(scene.canvas, 'pointerup', at, { id: 3 });
+  });
+  expect(flights()).toHaveLength(1);
+});
+
+test('unmounting mid-flight leaves no label, tween or key listener', () => {
+  const scene = loadSite();
+  click(scene.canvas, screenPointOf(scene.site.guardHouse, scene));
+  expect(flights()).toHaveLength(1);
+  const layer = scene.container.querySelector('.FactoryScene-label').parentElement;
+
+  scene.unmount();
+
+  // React drops the mount element anyway; the layer must also leave it.
+  expect(layer.parentElement).toBeNull();
+  expect(layer.querySelector('.FactoryScene-label')).toBeNull();
+  expect(document.querySelector('.FactoryScene-label')).toBeNull();
+  expect(flights()).toHaveLength(0);
+  expect(() => pressEscape()).not.toThrow();
+  expect(mockRenderers[0].disposed).toBe(true);
+});
+
+test('unmounting while focused removes the Esc listener', () => {
+  const scene = loadSite();
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+  finishFlight();
+
+  scene.unmount();
+  pressEscape();
+
+  expect(flights()).toHaveLength(0);
+});
+
+test('the dev debug handle lists buildings and reports focus', () => {
+  const scene = loadSite();
+  const handle = window.__FACTORY_SCENE__;
+
+  expect(handle.buildings.map(({ id, label }) => [id, label])).toEqual([
+    ['Office', 'Office'],
+    ['GuardHouse', 'Guard House'],
+  ]);
+  expect(handle.buildings[0].box.equals(boxOf(scene.site.office))).toBe(true);
+
+  click(scene.canvas, screenPointOf(scene.site.office, scene));
+  expect(handle.getFocus()).toEqual({ focusedId: null, flying: true });
+  finishFlight();
+  expect(handle.getFocus()).toEqual({ focusedId: 'Office', flying: false });
 });
