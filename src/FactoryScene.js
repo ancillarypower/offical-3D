@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-const MODEL_URL = `${process.env.PUBLIC_URL}/models/factory.glb`;
+const MODEL_URL = `${process.env.PUBLIC_URL}/models/factory0.glb`;
 
 // Phones report 3; rendering at 2 draws 4× instead of 9× the base pixel count.
 const pixelRatio = () => Math.min(window.devicePixelRatio, 2);
@@ -15,6 +15,23 @@ export function fitDistance(radius, verticalFovDeg, aspect) {
   const halfV = THREE.MathUtils.degToRad(verticalFovDeg / 2);
   const halfH = Math.atan(Math.tan(halfV) * safeAspect);
   return radius / Math.sin(Math.min(halfV, halfH));
+}
+
+// Top-level model nodes that drive along the road, e.g. CarE0, CarW3, Truck3.
+const VEHICLE_NAME = /^(Car[A-Z]+\d+|Truck\d+)$/;
+const vehiclePosition = new THREE.Vector3();
+
+// Show a vehicle only while its origin is over the ground (x/z, bounds inclusive),
+// so animation paths that run past the model's edge are never seen.
+export function updateVehicleVisibility(vehicles, groundBox) {
+  vehicles.forEach((vehicle) => {
+    vehicle.getWorldPosition(vehiclePosition);
+    vehicle.visible =
+      vehiclePosition.x >= groundBox.min.x &&
+      vehiclePosition.x <= groundBox.max.x &&
+      vehiclePosition.z >= groundBox.min.z &&
+      vehiclePosition.z <= groundBox.max.z;
+  });
 }
 
 // Free GPU buffers for every geometry and material in a loaded model.
@@ -67,6 +84,13 @@ function FactoryScene() {
       scene.add(sun);
       scene.add(gltf.scene);
 
+      const groundNode = gltf.scene.getObjectByName('Ground');
+      const groundBox = groundNode ? new THREE.Box3().setFromObject(groundNode) : null;
+      const vehicles = gltf.scene.children.filter((node) => VEHICLE_NAME.test(node.name));
+      if (!groundNode) {
+        console.warn('FactoryScene: model has no "Ground" node, so vehicles are not hidden off the ground.');
+      }
+
       // Every embedded clip loops forever. Deliberately not gated on reduced motion
       // (see design.md "3D scene ignores reduced motion").
       const mixer = new THREE.AnimationMixer(gltf.scene);
@@ -100,6 +124,7 @@ function FactoryScene() {
       const animate = () => {
         timer.update();
         mixer.update(timer.getDelta());
+        if (groundBox) updateVehicleVisibility(vehicles, groundBox);
         controls.update();
         renderer.render(scene, camera);
         frameId = requestAnimationFrame(animate);
@@ -128,7 +153,16 @@ function FactoryScene() {
       });
       resizeObserver.observe(mount);
 
+      // Development-only hook for browser acceptance checks; CRA strips this
+      // branch from production builds.
+      if (process.env.NODE_ENV !== 'production') {
+        window.__FACTORY_SCENE__ = { vehicles, groundBox };
+      }
+
       teardown = () => {
+        if (process.env.NODE_ENV !== 'production') {
+          delete window.__FACTORY_SCENE__;
+        }
         cancelAnimationFrame(frameId);
         resizeObserver.disconnect();
         mixer.stopAllAction();

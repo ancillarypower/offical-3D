@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import * as THREE from 'three';
-import FactoryScene, { fitDistance } from './FactoryScene';
+import FactoryScene, { fitDistance, updateVehicleVisibility } from './FactoryScene';
 
 // jsdom has no WebGL, so the renderer, loader and controls are faked. Plain classes,
 // not jest.fn(), because CRA's resetMocks would wipe mock implementations.
@@ -88,6 +88,10 @@ jest.mock('three', () => {
 function fakeGltf(clipCount = 0) {
   const scene = new THREE.Group();
   scene.add(new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial()));
+  // An empty Ground keeps the scene's bounds unchanged and avoids the missing-ground warning.
+  const ground = new THREE.Object3D();
+  ground.name = 'Ground';
+  scene.add(ground);
   const animations = Array.from({ length: clipCount }, (_, i) => new THREE.AnimationClip(`clip${i}`, 1, []));
   return { scene, animations };
 }
@@ -105,7 +109,7 @@ test('shows loading text until the model loads', () => {
   const { container } = render(<FactoryScene />);
   expect(screen.getByRole('status')).toHaveTextContent('Loading factory…');
   expect(mockLoads).toHaveLength(1);
-  expect(mockLoads[0].url).toMatch(/\/models\/factory\.glb$/);
+  expect(mockLoads[0].url).toMatch(/\/models\/factory0\.glb$/);
   expect(container.querySelector('canvas')).toBeNull();
 
   act(() => mockLoads[0].onLoad(fakeGltf()));
@@ -320,4 +324,96 @@ test('renders on a transparent canvas over the CSS gradient', () => {
   expect(renderer.options).toMatchObject({ antialias: true, alpha: true });
   expect(renderer.clearColors).toEqual([[0x000000, 0]]);
   expect(renderer.lastScene.background).toBeNull();
+});
+
+// A model shaped like factory0.glb: 160×160 ground, vehicles and a non-vehicle.
+function fakeFactory({ withGround = true } = {}) {
+  const scene = new THREE.Group();
+  if (withGround) {
+    const ground = new THREE.Mesh(new THREE.BoxGeometry(160, 0.1, 160), new THREE.MeshBasicMaterial());
+    ground.name = 'Ground';
+    scene.add(ground);
+  }
+  const node = (name, x, z) => {
+    const object = new THREE.Group();
+    object.name = name;
+    object.position.set(x, 0, z);
+    scene.add(object);
+    return object;
+  };
+  return {
+    scene,
+    animations: [],
+    carE0: node('CarE0', 0, 52.5),
+    carW0: node('CarW0', 88, 47.5),
+    smoke: node('Smoke0_0', 200, 0),
+  };
+}
+
+test.each([
+  [0, 52.5, true],
+  [80, 52.5, true],
+  [80.1, 52.5, false],
+  [-88.3, 47.5, false],
+  [20, 16.5, true],
+  [0, 81, false],
+])('updateVehicleVisibility follows the ground extent (%f, %f → %s)', (x, z, visible) => {
+  const groundBox = new THREE.Box3(new THREE.Vector3(-80, -0.1, -80), new THREE.Vector3(80, 0, 80));
+  const vehicle = new THREE.Object3D();
+  vehicle.position.set(x, 0, z);
+  updateVehicleVisibility([vehicle], groundBox);
+  expect(vehicle.visible).toBe(visible);
+});
+
+test('hides vehicles whose origin is off the ground after load', () => {
+  render(<FactoryScene />);
+  const model = fakeFactory();
+  act(() => mockLoads[0].onLoad(model));
+
+  expect(model.carE0.visible).toBe(true);
+  expect(model.carW0.visible).toBe(false);
+  expect(model.smoke.visible).toBe(true);
+});
+
+test('re-evaluates visibility every frame', () => {
+  const frames = [];
+  jest.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => frames.push(callback));
+  render(<FactoryScene />);
+  const model = fakeFactory();
+  act(() => mockLoads[0].onLoad(model));
+  expect(model.carE0.visible).toBe(true);
+
+  model.carE0.position.x = 81;
+  frames[frames.length - 1]();
+
+  expect(model.carE0.visible).toBe(false);
+});
+
+test('warns once and hides nothing without a Ground node', () => {
+  const frames = [];
+  jest.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => frames.push(callback));
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  render(<FactoryScene />);
+  const model = fakeFactory({ withGround: false });
+  act(() => mockLoads[0].onLoad(model));
+  frames[frames.length - 1]();
+  frames[frames.length - 1]();
+
+  expect(model.carE0.visible).toBe(true);
+  expect(model.carW0.visible).toBe(true);
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn.mock.calls[0][0]).toMatch(/Ground/);
+});
+
+test('exposes the dev debug handle and removes it on unmount', () => {
+  const { unmount } = render(<FactoryScene />);
+  const model = fakeFactory();
+  act(() => mockLoads[0].onLoad(model));
+
+  // Jest runs with NODE_ENV=test, which counts as a non-production build.
+  expect(window.__FACTORY_SCENE__.vehicles).toEqual([model.carE0, model.carW0]);
+  expect(window.__FACTORY_SCENE__.groundBox.max.x).toBeCloseTo(80);
+
+  unmount();
+  expect(window.__FACTORY_SCENE__).toBeUndefined();
 });
