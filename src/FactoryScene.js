@@ -57,10 +57,48 @@ const FOCUS_MARGIN = 1.2;
 const FLIGHT_SECONDS = 1;
 // A press and release further apart than this is an orbit drag, not a click.
 const CLICK_SLOP_PX = 5;
+const NO_COVER = { left: 0, top: 0 };
 
-function FactoryScene() {
+// The part of a width×height scene that a host's floating element covers: a left band
+// and a top band, ignored when they would leave nothing uncovered.
+function usableCover(cover, width, height) {
+  return cover.left < width && cover.top < height ? cover : NO_COVER;
+}
+
+// Distance that fits a bounding sphere into the uncovered part of the view: the same
+// vertical field of view, cropped to the uncovered height, at the uncovered aspect.
+export function coveredFit(radius, fovDeg, width, height, cover) {
+  // Not laid out yet: fitDistance treats the 0 or NaN aspect as 1.
+  if (!width || !height) return fitDistance(radius, fovDeg, width / height);
+  const w = width - cover.left;
+  const h = height - cover.top;
+  const halfV = THREE.MathUtils.degToRad(fovDeg / 2);
+  const regionFov = THREE.MathUtils.radToDeg(2 * Math.atan((Math.tan(halfV) * h) / height));
+  return fitDistance(radius, regionFov, w / h);
+}
+
+// Shift the drawn image so the view centre sits in the middle of the uncovered part.
+// Picking and CSS2D labels use the same projection, so they stay aligned.
+function applyCover(camera, cover, width, height) {
+  if (cover.left || cover.top) {
+    camera.setViewOffset(width, height, -cover.left / 2 || 0, -cover.top / 2 || 0, width, height);
+  } else {
+    camera.clearViewOffset();
+  }
+}
+
+function FactoryScene({ onFocusChange, coveredArea = NO_COVER } = {}) {
   const mountRef = useRef(null);
   const [status, setStatus] = useState('loading');
+  // Read through refs so a new callback or covered area never rebuilds the scene.
+  const onFocusChangeRef = useRef(onFocusChange);
+  onFocusChangeRef.current = onFocusChange;
+  const coverRef = useRef(coveredArea);
+  coverRef.current = coveredArea;
+  // Set once the scene exists: moves the framing to a new covered area.
+  const setCoverRef = useRef(null);
+  const coverLeft = coveredArea.left || 0;
+  const coverTop = coveredArea.top || 0;
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -117,9 +155,13 @@ function FactoryScene() {
       const centre = box.getCenter(new THREE.Vector3());
       const radius = box.getSize(new THREE.Vector3()).length() / 2;
       const camera = new THREE.PerspectiveCamera(45, width / height || 1);
-      let fit = fitDistance(radius, camera.fov, camera.aspect);
+      // Current covered area; tweened when the host changes it.
+      const cover = { left: coverRef.current.left || 0, top: coverRef.current.top || 0 };
+      const coverNow = () => usableCover(cover, mount.clientWidth, mount.clientHeight);
+      let fit = coveredFit(radius, camera.fov, width, height, usableCover(cover, width, height));
       camera.near = fit / 100;
       camera.far = fit * 10;
+      applyCover(camera, usableCover(cover, width, height), width, height);
       camera.position.copy(centre).addScaledVector(new THREE.Vector3(1, 0.6, 1).normalize(), fit);
       camera.updateProjectionMatrix();
 
@@ -174,9 +216,41 @@ function FactoryScene() {
       });
       const hideLabels = () => buildings.forEach((building) => (building.labelObject.visible = false));
 
+      // A clickable marker above each building, where its label appears. The layer stays
+      // click-through; the marker button itself takes pointer and keyboard input.
+      buildings.forEach((building) => {
+        const element = document.createElement('button');
+        element.type = 'button';
+        element.className = 'FactoryScene-marker';
+        element.setAttribute('aria-label', building.label);
+        // Inline, like the layer's pointer-events: none it overrides.
+        element.style.pointerEvents = 'auto';
+        const dot = document.createElement('span');
+        dot.className = 'FactoryScene-markerDot';
+        dot.setAttribute('aria-hidden', 'true');
+        element.appendChild(dot);
+        element.addEventListener('click', () => {
+          if (flight || building.id === focusedId) return;
+          focusOn(building);
+        });
+        labelRenderer.domElement.appendChild(element);
+        building.markerObject = new CSS2DObject(element);
+        building.markerObject.position.copy(building.labelObject.position);
+        scene.add(building.markerObject);
+      });
+      // Every marker shows except the one for the building being focused.
+      const showMarkers = (exceptId = null) =>
+        buildings.forEach((building) => (building.markerObject.visible = building.id !== exceptId));
+
       let focusedId = null;
       let overviewPose = null;
       let flight = null;
+      // Building and destination of the fly-in in progress, re-aimed on resize.
+      let flyIn = null;
+      const aimAt = (building, position) =>
+        position
+          .copy(building.centre)
+          .addScaledVector(FOCUS_DIRECTION, fitDistance(building.radius, camera.fov, camera.aspect) * FOCUS_MARGIN);
 
       // Swing the camera around a moving target: the target travels in a straight line
       // while the offset to the camera is interpolated in spherical coordinates, so the
@@ -226,10 +300,13 @@ function FactoryScene() {
         if (!overviewPose) {
           overviewPose = { position: camera.position.clone(), target: controls.target.clone() };
         }
-        const distance = fitDistance(building.radius, camera.fov, camera.aspect) * FOCUS_MARGIN;
-        const position = building.centre.clone().addScaledVector(FOCUS_DIRECTION, distance);
+        const position = aimAt(building, new THREE.Vector3());
+        flyIn = { building, position };
         hideLabels();
+        showMarkers(building.id);
+        onFocusChangeRef.current?.(building.id);
         fly(position, building.centre, () => {
+          flyIn = null;
           focusedId = building.id;
           controls.minDistance = building.radius;
           building.labelObject.visible = true;
@@ -239,6 +316,8 @@ function FactoryScene() {
       const returnToOverview = () => {
         const pose = overviewPose;
         hideLabels();
+        showMarkers();
+        onFocusChangeRef.current?.(null);
         fly(pose.position, pose.target, () => {
           focusedId = null;
           overviewPose = null;
@@ -320,18 +399,14 @@ function FactoryScene() {
       };
       animate();
 
-      // Re-fit whenever the container changes size (window resize, rotation, or a
-      // dvh change when mobile toolbars move). The camera keeps its direction and
-      // its zoom relative to the fit distance.
-      const resizeObserver = new ResizeObserver(() => {
+      // Re-fit the camera to the current size and covered area. The camera keeps its
+      // direction and its zoom relative to the fit distance.
+      const refit = () => {
         const w = mount.clientWidth;
         const h = mount.clientHeight;
         if (!w || !h) return;
-        renderer.setPixelRatio(pixelRatio());
-        renderer.setSize(w, h);
-        labelRenderer.setSize(w, h);
         camera.aspect = w / h;
-        const nextFit = fitDistance(radius, camera.fov, camera.aspect);
+        const nextFit = coveredFit(radius, camera.fov, w, h, coverNow());
         if (overviewPose) {
           // Focused or flying: keep the camera on the building and re-fit the
           // overview it will return to instead.
@@ -341,14 +416,47 @@ function FactoryScene() {
           const offset = camera.position.clone().sub(controls.target);
           camera.position.copy(controls.target).addScaledVector(offset, nextFit / fit);
         }
+        // fly() re-reads its destination each frame, so this re-aims a fly-in.
+        if (flyIn) aimAt(flyIn.building, flyIn.position);
         fit = nextFit;
         camera.near = fit / 100;
         camera.far = fit * 10;
+        applyCover(camera, coverNow(), w, h);
         camera.updateProjectionMatrix();
         controls.maxDistance = 3 * fit;
         controls.update();
+      };
+      // Re-fit whenever the container changes size (window resize, rotation, or a
+      // dvh change when mobile toolbars move).
+      const resizeObserver = new ResizeObserver(() => {
+        const w = mount.clientWidth;
+        const h = mount.clientHeight;
+        if (!w || !h) return;
+        renderer.setPixelRatio(pixelRatio());
+        renderer.setSize(w, h);
+        labelRenderer.setSize(w, h);
+        refit();
+        // Resizing clears the WebGL canvas; draw now so no blank frame is painted.
+        renderer.render(scene, camera);
+        labelRenderer.render(scene, camera);
       });
       resizeObserver.observe(mount);
+
+      // A new covered area moves the framing over a camera movement's duration.
+      // Not gated on reduced motion, like the flights (design.md "3D scene ignores
+      // reduced motion").
+      let coverTween = null;
+      setCoverRef.current = (next) => {
+        if (next.left === cover.left && next.top === cover.top) return;
+        if (coverTween) coverTween.kill();
+        coverTween = gsap.to(cover, {
+          ...next,
+          duration: FLIGHT_SECONDS,
+          ease: 'power2.inOut',
+          onUpdate: refit,
+          onComplete: () => (coverTween = null),
+        });
+      };
 
       // Development-only hook for browser acceptance checks; CRA strips this
       // branch from production builds.
@@ -369,13 +477,15 @@ function FactoryScene() {
         }
         cancelAnimationFrame(frameId);
         if (flight) flight.kill();
+        if (coverTween) coverTween.kill();
+        setCoverRef.current = null;
         window.removeEventListener('keydown', handleKeyDown);
         renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
         renderer.domElement.removeEventListener('pointerup', handlePointerUp);
         renderer.domElement.removeEventListener('pointercancel', handlePointerCancel);
         renderer.domElement.removeEventListener('pointermove', handlePointerMove);
         resizeObserver.disconnect();
-        buildings.forEach((building) => scene.remove(building.labelObject));
+        buildings.forEach((building) => scene.remove(building.labelObject, building.markerObject));
         labelRenderer.domElement.remove();
         mixer.stopAllAction();
         mixer.uncacheRoot(gltf.scene);
@@ -398,6 +508,10 @@ function FactoryScene() {
       teardown();
     };
   }, []);
+
+  useEffect(() => {
+    if (setCoverRef.current) setCoverRef.current({ left: coverLeft, top: coverTop });
+  }, [coverLeft, coverTop]);
 
   return (
     <div ref={mountRef} className="FactoryScene">

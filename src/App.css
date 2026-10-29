@@ -1,5 +1,8 @@
 :root {
-  --nav-height: 56px;
+  --nav-gap: 12px;
+  --nav-toggle-size: 40px;
+  /* Space a page leaves at its top so the floating nav does not cover it. */
+  --nav-clearance: calc(var(--nav-gap) * 2 + var(--nav-toggle-size));
   --bg: #0b0d17;
   --surface: #151a2e;
   --text: #e6e9f5;
@@ -15,19 +18,22 @@ body {
 
 /* Layout */
 
+/* Floating pill over the page; it reserves no layout height and sizes to its items. */
 .AppLayout-header {
-  position: relative;
-  box-sizing: border-box;
-  height: var(--nav-height);
-  background: var(--surface);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  position: fixed;
+  top: var(--nav-gap);
+  right: 16px;
+  z-index: 20;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(21, 26, 46, 0.85);
+  backdrop-filter: blur(8px);
 }
 
 .AppLayout-nav {
-  height: 100%;
   display: flex;
   align-items: center;
-  padding: 0 16px;
 }
 
 .AppLayout-links {
@@ -74,26 +80,49 @@ body {
 }
 
 @media (max-width: 768px) {
+  /* Only the toggle floats at the top left; it carries the pill look itself. */
+  .AppLayout-header {
+    left: 16px;
+    right: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    backdrop-filter: none;
+  }
+
   .AppLayout-menuToggle {
     display: block;
+    box-sizing: border-box;
+    min-width: var(--nav-toggle-size);
+    height: var(--nav-toggle-size);
+    padding: 0 12px;
+    border-color: rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    background: rgba(21, 26, 46, 0.85);
+    backdrop-filter: blur(8px);
   }
 
   /* Closed menu uses visibility, not display, so GSAP can animate it shut.
-     Hidden items are neither clickable nor focusable. */
+     Hidden items are neither clickable nor focusable. border-box makes the
+     tween's scrollHeight target equal the resting height. */
   .AppLayout-links {
     visibility: hidden;
     opacity: 0;
-    position: absolute;
-    top: var(--nav-height);
-    left: 0;
-    right: 0;
-    z-index: 10;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0;
-    padding: 8px 16px;
-    background: var(--surface);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    position: fixed;
+    top: calc(var(--nav-gap) + var(--nav-toggle-size) + 8px);
+    left: 16px;
+    right: 16px;
+    box-sizing: border-box;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px 8px;
+    padding: 8px;
+    border-radius: 12px;
+    /* Inset shadow instead of a border: scrollHeight, the tween's target, excludes borders. */
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+    background: rgba(21, 26, 46, 0.85);
+    backdrop-filter: blur(8px);
     overflow: hidden;
   }
 
@@ -101,17 +130,11 @@ body {
     visibility: visible;
     opacity: 1;
   }
-
-  .AppLayout-links a,
-  .AppLayout-links button {
-    width: 100%;
-    text-align: left;
-  }
 }
 
 .AppLayout-main {
-  min-height: calc(100vh - var(--nav-height));
-  min-height: calc(100dvh - var(--nav-height));
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 /* Pages */
@@ -119,9 +142,65 @@ body {
 /* dvh tracks mobile browser toolbars; browsers without it keep the vh line. */
 .HomePage,
 .ArchimedesPage {
-  height: calc(100vh - var(--nav-height));
-  height: calc(100dvh - var(--nav-height));
+  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
+}
+
+/* Home: the scene fills the page and the slogan floats over it in a card styled
+   like the floating nav. .is-focused hides the card while a building is focused. */
+.HomePage {
+  position: relative;
+}
+
+.HomePage-scene {
+  height: 100%;
+}
+
+.HomePage-card {
+  position: absolute;
+  z-index: 10;
+  left: 48px;
+  top: 50%;
+  transform: translateY(-50%);
+  box-sizing: border-box;
+  width: min(calc(40vw - 48px), 520px);
+  padding: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(21, 26, 46, 0.85);
+  backdrop-filter: blur(8px);
+}
+
+.HomePage-slogan {
+  margin: 0;
+  font-size: clamp(28px, 3.2vw, 48px);
+  line-height: 1.3;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.HomePage.is-focused .HomePage-card {
+  visibility: hidden;
+  opacity: 0;
+}
+
+@media (max-width: 768px) {
+  /* Floats at the bottom-left, below the model, which is not moved for it here. */
+  .HomePage-card {
+    top: auto;
+    bottom: 10%;
+    transform: none;
+    width: auto;
+    max-width: 60vw;
+    left: 16px;
+    padding: 12px 16px;
+    border-radius: 12px;
+  }
+
+  .HomePage-slogan {
+    font-size: clamp(16px, 4.8vw, 20px);
+  }
 }
 
 .FactoryScene,
@@ -163,8 +242,65 @@ body {
   white-space: nowrap;
 }
 
+/* Marker above each clickable building: an accent dot with an expanding halo. */
+.FactoryScene-marker {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+}
+
+.FactoryScene-marker:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.FactoryScene-markerDot {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
+
+.FactoryScene-markerDot::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  animation: FactoryScene-halo 1.6s ease-out infinite;
+}
+
+@keyframes FactoryScene-halo {
+  from {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  to {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .FactoryScene-markerDot::after {
+    animation: none;
+    transform: scale(1.6);
+    opacity: 0.6;
+  }
+}
+
 .ProfilePage {
-  padding: 32px 16px;
+  padding: calc(var(--nav-clearance) + 16px) 16px 32px;
 }
 
 .LoginPage {

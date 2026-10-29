@@ -61,6 +61,7 @@ describe('route guards', () => {
     renderApp('/');
     expect(currentPath()).toBe('/');
     expect(screen.getAllByTestId('factory-scene')).toHaveLength(1);
+    expect(screen.getByRole('heading', { level: 1, name: '以 AI 驅動虛擬電廠引領臺灣能源轉型' })).toBeInTheDocument();
   });
 
   test('redirects signed-in user from /login to /', () => {
@@ -72,19 +73,15 @@ describe('route guards', () => {
 describe('navigation bar', () => {
   test('nav shows Home, Archimedes, Profile, Logout in order', () => {
     renderApp('/', { user: 'amy' });
-    const nav = screen.getByRole('navigation');
-    const items = Array.from(nav.querySelectorAll('a, button'))
-      .map((el) => el.textContent)
-      .filter((text) => text !== 'Menu');
+    const list = screen.getByRole('navigation').querySelector('#main-nav-links');
+    const items = Array.from(list.querySelectorAll('a, button')).map((el) => el.textContent);
     expect(items).toEqual(['Home', 'Archimedes', 'Profile', 'Logout']);
   });
 
   test('nav for signed-out visitor shows Home, Archimedes, Profile, Log in', () => {
     renderApp('/');
-    const nav = screen.getByRole('navigation');
-    const items = Array.from(nav.querySelectorAll('a, button'))
-      .map((el) => el.textContent)
-      .filter((text) => text !== 'Menu');
+    const list = screen.getByRole('navigation').querySelector('#main-nav-links');
+    const items = Array.from(list.querySelectorAll('a, button')).map((el) => el.textContent);
     expect(items).toEqual(['Home', 'Archimedes', 'Profile', 'Log in']);
     expect(screen.getByRole('link', { name: 'Log in' })).toHaveAttribute('href', '/login');
   });
@@ -173,4 +170,11 @@ test('menu toggles aria-expanded and closes after clicking Profile', () => {
   userEvent.click(screen.getByRole('link', { name: 'Profile' }));
   expect(currentPath()).toBe('/profile');
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('menu toggle shows a hamburger icon and is named Menu', () => {
+  renderApp('/');
+  const toggle = screen.getByRole('button', { name: 'Menu' });
+  expect(toggle).toHaveTextContent('☰');
+  expect(screen.queryByText('Menu')).not.toBeInTheDocument();
 });

@@ -86,9 +86,10 @@ function AppLayout() {
             className="AppLayout-menuToggle"
             aria-expanded={menuOpen}
             aria-controls="main-nav-links"
+            aria-label="Menu"
             onClick={() => setMenuOpen((open) => !open)}
           >
-            Menu
+            <span aria-hidden="true">☰</span>
           </button>
           <ul
             id="main-nav-links"
