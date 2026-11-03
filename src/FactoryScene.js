@@ -30,8 +30,8 @@ export function updateVehicleVisibility(vehicles, groundBox) {
 // Clickable buildings. Each is a set of sibling nodes directly under the model root,
 // matched by name (see design.md "Buildings are defined by a name table").
 export const BUILDINGS = [
-  { id: 'Office', label: 'Office', parts: /^(Office(Roof|Canopy|Entrance|Solar\d+)?|OffWin[FS]\d+_\d+)$/ },
-  { id: 'GuardHouse', label: 'Guard House', parts: /^GuardHouse(Win)?$/ },
+  { id: 'Office', label: '辦公大樓', parts: /^(Office(Roof|Canopy|Entrance|Solar\d+)?|OffWin[FS]\d+_\d+)$/ },
+  { id: 'GuardHouse', label: '警衛室', parts: /^GuardHouse(Win)?$/ },
 ];
 
 // The building under the first visible raycast hit, or null. Raycaster ignores
