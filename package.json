@@ -2,6 +2,7 @@
   "name": "gsap-app",
   "version": "0.1.0",
   "private": true,
+  "homepage": "https://ancillarypower.github.io/offical-3D",
   "dependencies": {
     "@gsap/react": "^2.1.2",
     "@testing-library/dom": "^10.4.2",
