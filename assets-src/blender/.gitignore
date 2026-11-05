@@ -1,0 +1,3 @@
+# 渲染輸出與 Blender 備份檔，可由 town_layout.py 重新產生
+*.png
+*.blend1
